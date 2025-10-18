@@ -1,0 +1,1 @@
+.config/\nsample_data/\n__pycache__/\n*.py[cod]\n.ipynb_checkpoints/\n*.log\n/output/\n.DS_Store
