@@ -14,8 +14,6 @@ __global__ void vectorAdd(const float* A, const float* B, float* C, int N) {
     if (i < N) {  //only take first 10 threads
         C[i] = A[i] + B[i];
     }
-
-    //Each thread does one element of vector addition
 }
 
 int main() {
