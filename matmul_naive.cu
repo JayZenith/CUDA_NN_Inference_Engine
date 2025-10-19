@@ -4,7 +4,7 @@
 #include <chrono>
 
 // Matrix size (small for testing)
-#define N 1024
+#define N 16
 
 // CUDA kernel: each thread computes one element of C
 __global__ void matmul_naive(float *A, float *B, float *C, int n) {

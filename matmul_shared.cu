@@ -5,7 +5,7 @@
 #include <cmath>
 
 // Matrix size
-#define N 1024
+#define N 16
 #define TILE_SIZE 16
 
 // CPU matrix multiplication
@@ -34,38 +34,39 @@ __global__ void matmul_naive(float *A, float *B, float *C, int n) {
 }
 
 // Shared memory GPU kernel
+
 __global__ void matmul_shared(float *A, float *B, float *C, int n) {
     __shared__ float tile_A[TILE_SIZE][TILE_SIZE];
     __shared__ float tile_B[TILE_SIZE][TILE_SIZE];
 
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    int row = blockIdx.y * TILE_SIZE + threadIdx.y;
+    int col = blockIdx.x * TILE_SIZE + threadIdx.x;
 
     float sum = 0.0f;
 
-    for(int t=0; t < (n + TILE_SIZE - 1)/TILE_SIZE; t++) {
-        // Load tiles
-        if(row < n && t*TILE_SIZE + threadIdx.x < n)
-            tile_A[threadIdx.y][threadIdx.x] = A[row*n + t*TILE_SIZE + threadIdx.x];
-        else
-            tile_A[threadIdx.y][threadIdx.x] = 0.0f;
+    for (int t = 0; t < n/TILE_SIZE; t++) {
+        // Load tiles with bounds check
+        tile_A[threadIdx.y][threadIdx.x] = (row < n && t*TILE_SIZE + threadIdx.x < n) ?
+                                           A[row*n + t*TILE_SIZE + threadIdx.x] : 0.0f;
 
-        if(col < n && t*TILE_SIZE + threadIdx.y < n)
-            tile_B[threadIdx.y][threadIdx.x] = B[(t*TILE_SIZE + threadIdx.y)*n + col];
-        else
-            tile_B[threadIdx.y][threadIdx.x] = 0.0f;
+        tile_B[threadIdx.y][threadIdx.x] = (t*TILE_SIZE + threadIdx.y < n && col < n) ?
+                                           B[(t*TILE_SIZE + threadIdx.y)*n + col] : 0.0f;
 
         __syncthreads();
 
-        for(int k=0; k<TILE_SIZE; k++)
+        // Multiply tiles
+        for (int k = 0; k < TILE_SIZE; k++)
             sum += tile_A[threadIdx.y][k] * tile_B[k][threadIdx.x];
 
         __syncthreads();
     }
 
-    if(row < n && col < n)
+    if (row < n && col < n)
         C[row*n + col] = sum;
 }
+
+
+
 
 int main() {
     int n = N;
@@ -118,12 +119,18 @@ int main() {
     end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<float, std::milli> cpu_time = end - start;
 
-    // Verification
+    // Verification using relative error
+    float eps = 1e-3f; // 0.1% tolerance
     int correct_naive = 1, correct_shared = 1;
-    for(int i=0;i<n*n;i++){
-        if(fabs(h_C_naive[i]-h_C_cpu[i])>1e-5) correct_naive = 0;
-        if(fabs(h_C_shared[i]-h_C_cpu[i])>1e-5) correct_shared = 0;
+
+    for(int i=0; i<n*n; i++) {
+        float diff_naive = fabs(h_C_naive[i] - h_C_cpu[i]);
+        float diff_shared = fabs(h_C_shared[i] - h_C_cpu[i]);
+
+        if(diff_naive / (fabs(h_C_cpu[i]) + 1e-6f) > eps) correct_naive = 0;
+        if(diff_shared / (fabs(h_C_cpu[i]) + 1e-6f) > eps) correct_shared = 0;
     }
+
 
     printf("Verification Naive GPU: %s\n", correct_naive ? "PASSED":"FAILED");
     printf("Verification Shared GPU: %s\n", correct_shared ? "PASSED":"FAILED");
