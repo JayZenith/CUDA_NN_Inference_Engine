@@ -5,7 +5,7 @@
 #include <cmath>
 
 // Matrix size
-#define N 16
+#define N 1024
 #define TILE_SIZE 16
 
 // CPU matrix multiplication
