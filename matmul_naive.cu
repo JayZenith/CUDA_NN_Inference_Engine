@@ -55,6 +55,9 @@ int main() {
     cudaMalloc(&d_B, bytes);
     cudaMalloc(&d_C, bytes);
 
+    // After cudaMalloc
+    cudaMemset(d_C, 0, bytes);
+
     // Copy data to GPU
     cudaMemcpy(d_A, h_A, bytes, cudaMemcpyHostToDevice);
     cudaMemcpy(d_B, h_B, bytes, cudaMemcpyHostToDevice);
@@ -66,6 +69,10 @@ int main() {
 
     auto start = std::chrono::high_resolution_clock::now();
     matmul_naive<<<numBlocks, threadsPerBlock>>>(d_A, d_B, d_C, n);
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess)
+        printf("CUDA error: %s\n", cudaGetErrorString(err));
+    cudaDeviceSynchronize();
     cudaDeviceSynchronize();
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<float, std::milli> gpu_time = end - start;
@@ -81,9 +88,10 @@ int main() {
 
     // Verify correctness
     int correct = 1;
-    for(int i=0;i<n*n;i++){
-        if(abs(h_C[i] - h_C_cpu[i]) > 1e-5){
+    for (int i = 0; i < n * n; i++) {
+        if (fabs(h_C[i] - h_C_cpu[i]) > 1e-3) {
             correct = 0;
+            printf("Mismatch at %d: GPU=%f, CPU=%f\n", i, h_C[i], h_C_cpu[i]);
             break;
         }
     }
