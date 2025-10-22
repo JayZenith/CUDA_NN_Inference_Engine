@@ -33,3 +33,21 @@ __global__ void matmul_tiled(const float* A, const float* B, float* C,
     if (row < M && col < N)
         C[row * N + col] = acc;
 }
+
+__global__ void relu_kernel(float* x, int size){
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if(i < size) x[i] = fmaxf(0.0f, x[i]);
+}
+
+__global__ void softmax_kernel(float* x, int size){
+    float max_val = -1e20;
+    for(int i=0;i<size;i++) max_val = fmaxf(max_val, x[i]);
+    
+    float sum = 0.0f;
+    for(int i=0;i<size;i++){
+        x[i] = expf(x[i] - max_val);
+        sum += x[i];
+    }
+    for(int i=0;i<size;i++) x[i] /= sum;
+}
+

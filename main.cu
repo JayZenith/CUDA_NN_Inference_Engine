@@ -1,7 +1,7 @@
 #include <cuda_runtime.h>
 #include <iostream>
 #include <chrono>
-#include "kernels.cu"
+#include "src/kernels.cu"
 
 void forward_gpu(float* d_input, float* d_W1, float* d_b1,
                  float* d_W2, float* d_b2, float* d_output,
@@ -30,7 +30,7 @@ void forward_gpu(float* d_input, float* d_W1, float* d_b1,
 }
 
 int main() {
-    int input_size = 2048;
+    int input_size = 1024;
     int hidden_size = 512;
     int output_size = 10;
 
