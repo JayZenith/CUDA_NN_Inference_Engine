@@ -71,7 +71,7 @@ int main() {
     cudaDeviceSynchronize();
     auto end = std::chrono::high_resolution_clock::now();
     cudaMemcpy(h_output, d_output, output_size*sizeof(float), cudaMemcpyDeviceToHost);
-    std::cout << "GPU forward pass time: " 
+    std::cout << "GPU forward pass time: "
               << std::chrono::duration<float, std::milli>(end-start).count() << " ms\n";
 
     std::cout << "Output[0]: " << h_output[0] << std::endl;

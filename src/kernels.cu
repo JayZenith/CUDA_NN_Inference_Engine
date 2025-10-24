@@ -42,7 +42,7 @@ __global__ void relu_kernel(float* x, int size){
 __global__ void softmax_kernel(float* x, int size){
     float max_val = -1e20;
     for(int i=0;i<size;i++) max_val = fmaxf(max_val, x[i]);
-    
+
     float sum = 0.0f;
     for(int i=0;i<size;i++){
         x[i] = expf(x[i] - max_val);
