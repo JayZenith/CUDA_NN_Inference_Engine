@@ -51,3 +51,40 @@ __global__ void softmax_kernel(float* x, int size){
     for(int i=0;i<size;i++) x[i] /= sum;
 }
 
+__global__void softmax_kernel2(float* x, int size){
+    extern __shared__ float sdata[]; //dynamically allocate shared memory
+    int tid = threadIdx.x;
+
+    //load data into shared memory
+    float val = (tid < size) ? x[tid] : -1e20f; //for max_val
+    sdata[tid] = val;
+
+    //wait for all threads to finish loading
+    __syncthreads();
+
+    //1. Parallel max reduction
+    for(int s = blockDim.x/2; s>0; s>>=1){
+        if(tid < s) sdata[tid] = fmaxf(sdata[tid], sdata[tid+s]);
+        __syncthreads();
+    }
+    float max_val = sdata[0];
+    __syncthreads();
+
+    //2. compute exp(x-max_val)
+    float exp_val = (tid < size) ? expf(x[tid] - max_val) : 0.0f;
+    sdata[tid] = exp_val;
+    __syncthreads();
+
+    //3. Parallel sum reduction
+    for(int s = blockDim.x/2; s > 0; s >>= 1) {
+        if(tid < s) sdata[tid] += sdata[tid + s];
+        __syncthreads();
+    }
+
+    float sum = sdata[0];
+    __syncthreads();
+
+    // Step 4: Normalize
+    if(tid < size) x[tid] = exp_val / sum;
+}
+

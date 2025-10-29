@@ -35,8 +35,8 @@ void forward_gpu(float* d_input, float* d_W1, float* d_b1,
 
     // Add bias (simple kernel)
 
-    // Classification 
-    // <<<1,1>>> as kernel runs on one vector and dosent need many threads 
+    // Classification
+    // <<<1,1>>> as kernel runs on one vector and dosent need many threads
     softmax_kernel<<<1,1>>>(d_output, output_size);
 
     cudaFree(d_hidden);
@@ -87,7 +87,7 @@ int main() {
     std::cout << "GPU forward pass time: "
               << std::chrono::duration<float, std::milli>(end-start).count() << " ms\n";
 
-    std::cout << "probability of class 0: " << h_output[0] << std::endl; 
+    std::cout << "probability of class 0: " << h_output[0] << std::endl;
 
     // CPU forward pass (naive)
     auto cpu_start = std::chrono::high_resolution_clock::now();
