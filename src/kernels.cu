@@ -34,6 +34,7 @@ __global__ void matmul_tiled(const float* A, const float* B, float* C,
         C[row * N + col] = acc;
 }
 
+<<<<<<< HEAD
 _global__ void fused_matmul_bias(const float* A, const float* B, float* C,
                              int M, int N, int K, const float* bias) {
     __shared__ float sA[TILE][TILE];
@@ -66,6 +67,8 @@ _global__ void fused_matmul_bias(const float* A, const float* B, float* C,
     }
 }
 
+=======
+>>>>>>> origin/main
 __global__ void relu_kernel(float* x, int size){
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if(i < size) x[i] = fmaxf(0.0f, x[i]);

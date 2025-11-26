@@ -21,8 +21,12 @@ void forward_gpu(float* d_input, float* d_W1, float* d_b1,
     // C = d_hidden (1 x hidden_size)
     // (1 × input_size) × (input_size × hidden_size) = (1 × hidden_size)
     //const float* A, const float* B, float* C, int M, int N, int K
+<<<<<<< HEAD
     //matmul_tiled<<<blocks, threads, 0, stream>>>(d_input, d_W1, d_hidden, 1, input_size, hidden_size);
     fused_matmul_bias<<<blocks, threads, 0, stream>>>(d_input, d_W1, d_hidden, 1, input_size, hidden_size, d_b1);
+=======
+    matmul_tiled<<<blocks, threads, 0, stream>>>(d_input, d_W1, d_hidden, 1, input_size, hidden_size);
+>>>>>>> origin/main
     //cudaDeviceSynchronize();
 
     // Add bias (simple kernel)
