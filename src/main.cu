@@ -20,7 +20,7 @@ void forward_gpu(float* d_input, float* d_W1, float* d_b1,
     // C = d_hidden (1 x hidden_size)
     // (1 × input_size) × (input_size × hidden_size) = (1 × hidden_size)
     //const float* A, const float* B, float* C, int M, int N, int K
-    matmul_tiled<<<blocks, threads>>>(d_input, d_W1, d_hidden, 1, input_size, hidden_size);
+    matmul_tiled<<<blocks, threads>>>(d_input, d_W1, d_hidden, 1, hidden_size, input_size);
     cudaDeviceSynchronize();
 
     // Add bias (simple kernel)
@@ -31,7 +31,7 @@ void forward_gpu(float* d_input, float* d_W1, float* d_b1,
 
     // layer2: hidden * W2
     // output = (1 × hidden_size) × (hidden_size × output_size) = (1 × output_size)
-    matmul_tiled<<<dim3((output_size+15)/16,(1+15)/16), dim3(16,16)>>>(d_hidden, d_W2, d_output, 1, hidden_size, output_size);
+    matmul_tiled<<<dim3((output_size+15)/16,(1+15)/16), dim3(16,16)>>>(d_hidden, d_W2, d_output, 1, output_size, hidden_size);
     cudaDeviceSynchronize();
 
     // Add bias (simple kernel)
