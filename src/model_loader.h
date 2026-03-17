@@ -13,6 +13,7 @@ struct ModelConfig {
     int vocab_size;
     int n_heads;
     int ffn_hidden;
+    int tie_word_embeddings;
     std::string token_embedding_path;
     std::string positional_embedding_path;
     std::string q_proj_path;
@@ -21,6 +22,9 @@ struct ModelConfig {
     std::string o_proj_path;
     std::string ffn_up_path;
     std::string ffn_down_path;
+    std::string final_norm_weight_path;
+    std::string final_norm_bias_path;
+    std::string lm_head_path;
 };
 
 struct EmbeddingWeights {
@@ -41,6 +45,13 @@ struct FFNWeights {
     ModelConfig config;
     std::vector<float> ffn_up_weight;
     std::vector<float> ffn_down_weight;
+};
+
+struct OutputWeights {
+    ModelConfig config;
+    std::vector<float> final_norm_weight;
+    std::vector<float> final_norm_bias;
+    std::vector<float> lm_head_weight;
 };
 
 inline std::string read_text_file(const char* path) {
@@ -144,6 +155,7 @@ inline ModelConfig load_model_config(const char* path) {
         extract_json_int(text, "vocab_size"),
         extract_json_int(text, "n_heads"),
         extract_json_int(text, "ffn_hidden"),
+        extract_json_int(text, "tie_word_embeddings"),
         extract_json_string(text, "token_embedding_path"),
         extract_json_string(text, "positional_embedding_path"),
         extract_json_string(text, "q_proj_path"),
@@ -152,10 +164,14 @@ inline ModelConfig load_model_config(const char* path) {
         extract_json_string(text, "o_proj_path"),
         extract_json_string(text, "ffn_up_path"),
         extract_json_string(text, "ffn_down_path"),
+        extract_json_string(text, "final_norm_weight_path"),
+        extract_json_string(text, "final_norm_bias_path"),
+        extract_json_string(text, "lm_head_path"),
     };
 
     if (config.d_model <= 0 || config.max_seq_len <= 0 || config.vocab_size <= 0 ||
-        config.n_heads <= 0 || config.ffn_hidden <= 0) {
+        config.n_heads <= 0 || config.ffn_hidden <= 0 ||
+        (config.tie_word_embeddings != 0 && config.tie_word_embeddings != 1)) {
         std::cerr << "Config dimensions must be positive\n";
         std::exit(1);
     }
@@ -242,6 +258,49 @@ inline AttentionWeights load_attention_weights(const char* config_path) {
         weights.v_proj_weight.size() != expected_proj_values ||
         weights.o_proj_weight.size() != expected_proj_values) {
         std::cerr << "attention projection size mismatch\n";
+        std::exit(1);
+    }
+
+    return weights;
+}
+
+inline OutputWeights load_output_weights(const char* config_path,
+                                         const std::vector<float>& token_embedding_table) {
+    const ModelConfig config = load_model_config(config_path);
+    const std::filesystem::path base_dir = std::filesystem::path(config_path).parent_path();
+
+    OutputWeights weights{
+        config,
+        load_floats(base_dir / config.final_norm_weight_path),
+        load_floats(base_dir / config.final_norm_bias_path),
+        {},
+    };
+
+    if (config.tie_word_embeddings == 1) {
+        weights.lm_head_weight.resize(
+            static_cast<std::size_t>(config.d_model) * static_cast<std::size_t>(config.vocab_size));
+        for (int token_id = 0; token_id < config.vocab_size; ++token_id) {
+            for (int feature_idx = 0; feature_idx < config.d_model; ++feature_idx) {
+                weights.lm_head_weight[feature_idx * config.vocab_size + token_id] =
+                    token_embedding_table[token_id * config.d_model + feature_idx];
+            }
+        }
+    } else {
+        weights.lm_head_weight = load_floats(base_dir / config.lm_head_path);
+    }
+
+    const std::size_t expected_norm_values = static_cast<std::size_t>(config.d_model);
+    const std::size_t expected_lm_values =
+        static_cast<std::size_t>(config.d_model) * static_cast<std::size_t>(config.vocab_size);
+
+    if (weights.final_norm_weight.size() != expected_norm_values ||
+        weights.final_norm_bias.size() != expected_norm_values) {
+        std::cerr << "final norm size mismatch\n";
+        std::exit(1);
+    }
+
+    if (weights.lm_head_weight.size() != expected_lm_values) {
+        std::cerr << "lm head size mismatch\n";
         std::exit(1);
     }
 

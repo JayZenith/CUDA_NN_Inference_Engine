@@ -4,6 +4,7 @@
   "vocab_size": 5,
   "n_heads": 2,
   "ffn_hidden": 16,
+  "tie_word_embeddings": 1,
   "token_embedding_path": "token_embeddings.txt",
   "positional_embedding_path": "pos_embeddings.txt",
   "q_proj_path": "q_proj.txt",
@@ -11,5 +12,8 @@
   "v_proj_path": "v_proj.txt",
   "o_proj_path": "o_proj.txt",
   "ffn_up_path": "ffn_up.txt",
-  "ffn_down_path": "ffn_down.txt"
+  "ffn_down_path": "ffn_down.txt",
+  "final_norm_weight_path": "final_norm_weight.txt",
+  "final_norm_bias_path": "final_norm_bias.txt",
+  "lm_head_path": "unused.txt"
 }

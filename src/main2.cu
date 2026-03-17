@@ -22,404 +22,408 @@ int next_power_of_two(int value) {
     return power;
 }
 
-}  // namespace
+struct DeviceBuffers {
+    int* token_ids = nullptr;
 
-int main(int argc, char** argv) {
-    if (argc != 3) {
-        std::cerr
-            << "Usage: " << argv[0]
-            << " <model_config.json> <token_ids.txt>\n";
-        return 1;
-    }
+    float* token_embedding_table = nullptr;
+    float* positional_embedding_table = nullptr;
+    float* layernorm_weight = nullptr;
+    float* layernorm_bias = nullptr;
+    float* q_proj_weight = nullptr;
+    float* k_proj_weight = nullptr;
+    float* v_proj_weight = nullptr;
+    float* o_proj_weight = nullptr;
+    float* ffn_up_weight = nullptr;
+    float* ffn_down_weight = nullptr;
+    float* final_norm_weight = nullptr;
+    float* final_norm_bias = nullptr;
+    float* lm_head_weight = nullptr;
 
-    const EmbeddingWeights weights = load_embedding_weights(argv[1]);
-    const AttentionWeights attention_weights = load_attention_weights(argv[1]);
-    const FFNWeights ffn_weights = load_ffn_weights(argv[1]);
-    const std::vector<int> h_token_ids = load_ints(argv[2]);
-    const int d_model = weights.config.d_model;
-    const int max_seq_len = weights.config.max_seq_len;
-    const int n_heads = weights.config.n_heads;
-    const int d_head = d_model / n_heads;
-    const int ffn_hidden = weights.config.ffn_hidden;
-    const int seq_len = static_cast<int>(h_token_ids.size());
-    const int total = seq_len * d_model;
-    const int ffn_total = seq_len * ffn_hidden;
+    float* embedding_output = nullptr;
+    float* pre_attn_norm = nullptr;
+    float* q = nullptr;
+    float* k = nullptr;
+    float* v = nullptr;
+    float* attn_scores = nullptr;
+    float* attn_context = nullptr;
+    float* attn_output = nullptr;
+    float* attn_residual = nullptr;
+    float* pre_ffn_norm = nullptr;
+    float* ffn_up = nullptr;
+    float* ffn_down = nullptr;
+    float* final_hidden = nullptr;
+    float* final_norm_output = nullptr;
+    float* logits = nullptr;
+};
 
-    if (seq_len > max_seq_len) {
-        std::cerr << "seq_len exceeds max_seq_len\n";
-        return 1;
-    }
+void free_buffers(DeviceBuffers& buffers) {
+    cudaFree(buffers.token_ids);
+    cudaFree(buffers.token_embedding_table);
+    cudaFree(buffers.positional_embedding_table);
+    cudaFree(buffers.layernorm_weight);
+    cudaFree(buffers.layernorm_bias);
+    cudaFree(buffers.q_proj_weight);
+    cudaFree(buffers.k_proj_weight);
+    cudaFree(buffers.v_proj_weight);
+    cudaFree(buffers.o_proj_weight);
+    cudaFree(buffers.ffn_up_weight);
+    cudaFree(buffers.ffn_down_weight);
+    cudaFree(buffers.final_norm_weight);
+    cudaFree(buffers.final_norm_bias);
+    cudaFree(buffers.lm_head_weight);
+    cudaFree(buffers.embedding_output);
+    cudaFree(buffers.pre_attn_norm);
+    cudaFree(buffers.q);
+    cudaFree(buffers.k);
+    cudaFree(buffers.v);
+    cudaFree(buffers.attn_scores);
+    cudaFree(buffers.attn_context);
+    cudaFree(buffers.attn_output);
+    cudaFree(buffers.attn_residual);
+    cudaFree(buffers.pre_ffn_norm);
+    cudaFree(buffers.ffn_up);
+    cudaFree(buffers.ffn_down);
+    cudaFree(buffers.final_hidden);
+    cudaFree(buffers.final_norm_output);
+    cudaFree(buffers.logits);
+}
 
-    if (d_model > 256) {
-        std::cerr << "layernorm path currently expects d_model <= 256\n";
-        return 1;
-    }
+void allocate_buffers(DeviceBuffers& buffers,
+                      int max_seq_len,
+                      int d_model,
+                      int vocab_size,
+                      int n_heads,
+                      int ffn_hidden) {
+    const int max_total = max_seq_len * d_model;
+    const int max_ffn_total = max_seq_len * ffn_hidden;
+    const int max_scores = n_heads * max_seq_len * max_seq_len;
+    const int max_logits = max_seq_len * vocab_size;
 
-    if (seq_len > 256) {
-        std::cerr << "attention path currently expects seq_len <= 256\n";
-        return 1;
-    }
+    check_cuda(cudaMalloc(&buffers.token_ids, max_seq_len * sizeof(int)), "cudaMalloc token_ids");
 
-    const int vocab_size = weights.config.vocab_size;
-    for (int token_id : h_token_ids) {
-        if (token_id < 0 || token_id >= vocab_size) {
-            std::cerr << "token id out of range: " << token_id << '\n';
-            return 1;
-        }
-    }
+    check_cuda(cudaMalloc(&buffers.token_embedding_table, vocab_size * d_model * sizeof(float)),
+               "cudaMalloc token_embedding_table");
+    check_cuda(cudaMalloc(&buffers.positional_embedding_table, max_seq_len * d_model * sizeof(float)),
+               "cudaMalloc positional_embedding_table");
+    check_cuda(cudaMalloc(&buffers.layernorm_weight, d_model * sizeof(float)),
+               "cudaMalloc layernorm_weight");
+    check_cuda(cudaMalloc(&buffers.layernorm_bias, d_model * sizeof(float)),
+               "cudaMalloc layernorm_bias");
+    check_cuda(cudaMalloc(&buffers.q_proj_weight, d_model * d_model * sizeof(float)),
+               "cudaMalloc q_proj_weight");
+    check_cuda(cudaMalloc(&buffers.k_proj_weight, d_model * d_model * sizeof(float)),
+               "cudaMalloc k_proj_weight");
+    check_cuda(cudaMalloc(&buffers.v_proj_weight, d_model * d_model * sizeof(float)),
+               "cudaMalloc v_proj_weight");
+    check_cuda(cudaMalloc(&buffers.o_proj_weight, d_model * d_model * sizeof(float)),
+               "cudaMalloc o_proj_weight");
+    check_cuda(cudaMalloc(&buffers.ffn_up_weight, d_model * ffn_hidden * sizeof(float)),
+               "cudaMalloc ffn_up_weight");
+    check_cuda(cudaMalloc(&buffers.ffn_down_weight, ffn_hidden * d_model * sizeof(float)),
+               "cudaMalloc ffn_down_weight");
+    check_cuda(cudaMalloc(&buffers.final_norm_weight, d_model * sizeof(float)),
+               "cudaMalloc final_norm_weight");
+    check_cuda(cudaMalloc(&buffers.final_norm_bias, d_model * sizeof(float)),
+               "cudaMalloc final_norm_bias");
+    check_cuda(cudaMalloc(&buffers.lm_head_weight, d_model * vocab_size * sizeof(float)),
+               "cudaMalloc lm_head_weight");
 
-    std::vector<float> h_output(total);
-    std::vector<float> h_layernorm_weight(d_model, 1.0f);
-    std::vector<float> h_layernorm_bias(d_model, 0.0f);
-    std::vector<float> h_layernorm_output(total);
-    std::vector<float> h_ffn_layernorm_output(total);
-    std::vector<float> h_q(total);
-    std::vector<float> h_k(total);
-    std::vector<float> h_v(total);
-    std::vector<float> h_attn_output(total);
-    std::vector<float> h_ffn_up(ffn_total);
-    std::vector<float> h_ffn_down(total);
-    std::vector<float> h_final_output(total);
+    check_cuda(cudaMalloc(&buffers.embedding_output, max_total * sizeof(float)),
+               "cudaMalloc embedding_output");
+    check_cuda(cudaMalloc(&buffers.pre_attn_norm, max_total * sizeof(float)),
+               "cudaMalloc pre_attn_norm");
+    check_cuda(cudaMalloc(&buffers.q, max_total * sizeof(float)), "cudaMalloc q");
+    check_cuda(cudaMalloc(&buffers.k, max_total * sizeof(float)), "cudaMalloc k");
+    check_cuda(cudaMalloc(&buffers.v, max_total * sizeof(float)), "cudaMalloc v");
+    check_cuda(cudaMalloc(&buffers.attn_scores, max_scores * sizeof(float)),
+               "cudaMalloc attn_scores");
+    check_cuda(cudaMalloc(&buffers.attn_context, max_total * sizeof(float)),
+               "cudaMalloc attn_context");
+    check_cuda(cudaMalloc(&buffers.attn_output, max_total * sizeof(float)),
+               "cudaMalloc attn_output");
+    check_cuda(cudaMalloc(&buffers.attn_residual, max_total * sizeof(float)),
+               "cudaMalloc attn_residual");
+    check_cuda(cudaMalloc(&buffers.pre_ffn_norm, max_total * sizeof(float)),
+               "cudaMalloc pre_ffn_norm");
+    check_cuda(cudaMalloc(&buffers.ffn_up, max_ffn_total * sizeof(float)),
+               "cudaMalloc ffn_up");
+    check_cuda(cudaMalloc(&buffers.ffn_down, max_total * sizeof(float)),
+               "cudaMalloc ffn_down");
+    check_cuda(cudaMalloc(&buffers.final_hidden, max_total * sizeof(float)),
+               "cudaMalloc final_hidden");
+    check_cuda(cudaMalloc(&buffers.final_norm_output, max_total * sizeof(float)),
+               "cudaMalloc final_norm_output");
+    check_cuda(cudaMalloc(&buffers.logits, max_logits * sizeof(float)), "cudaMalloc logits");
+}
 
-    int* d_token_ids = nullptr;
-    float* d_token_embedding_table = nullptr;
-    float* d_positional_embedding_table = nullptr;
-    float* d_embedding_output = nullptr;
-    float* d_layernorm_weight = nullptr;
-    float* d_layernorm_bias = nullptr;
-    float* d_layernorm_output = nullptr;
-    float* d_q_proj_weight = nullptr;
-    float* d_k_proj_weight = nullptr;
-    float* d_v_proj_weight = nullptr;
-    float* d_o_proj_weight = nullptr;
-    float* d_q = nullptr;
-    float* d_k = nullptr;
-    float* d_v = nullptr;
-    float* d_attn_scores = nullptr;
-    float* d_attn_context = nullptr;
-    float* d_attn_output = nullptr;
-    float* d_attn_residual_output = nullptr;
-    float* d_ffn_layernorm_output = nullptr;
-    float* d_ffn_up_weight = nullptr;
-    float* d_ffn_down_weight = nullptr;
-    float* d_ffn_up = nullptr;
-    float* d_ffn_down = nullptr;
-    float* d_final_output = nullptr;
+void copy_static_weights_to_device(const EmbeddingWeights& embedding_weights,
+                                   const AttentionWeights& attention_weights,
+                                   const FFNWeights& ffn_weights,
+                                   const OutputWeights& output_weights,
+                                   const std::vector<float>& layernorm_weight,
+                                   const std::vector<float>& layernorm_bias,
+                                   DeviceBuffers& buffers) {
+    const int d_model = embedding_weights.config.d_model;
+    const int vocab_size = embedding_weights.config.vocab_size;
+    const int max_seq_len = embedding_weights.config.max_seq_len;
+    const int ffn_hidden = embedding_weights.config.ffn_hidden;
 
-    check_cuda(cudaMalloc(&d_token_ids, seq_len * sizeof(int)), "cudaMalloc d_token_ids");
-    check_cuda(cudaMalloc(&d_token_embedding_table, vocab_size * d_model * sizeof(float)),
-               "cudaMalloc d_token_embedding_table");
-    check_cuda(cudaMalloc(&d_positional_embedding_table, max_seq_len * d_model * sizeof(float)),
-               "cudaMalloc d_positional_embedding_table");
-    check_cuda(cudaMalloc(&d_embedding_output, total * sizeof(float)), "cudaMalloc d_embedding_output");
-    check_cuda(cudaMalloc(&d_layernorm_weight, d_model * sizeof(float)), "cudaMalloc d_layernorm_weight");
-    check_cuda(cudaMalloc(&d_layernorm_bias, d_model * sizeof(float)), "cudaMalloc d_layernorm_bias");
-    check_cuda(cudaMalloc(&d_layernorm_output, total * sizeof(float)), "cudaMalloc d_layernorm_output");
-    check_cuda(cudaMalloc(&d_q_proj_weight, d_model * d_model * sizeof(float)), "cudaMalloc d_q_proj_weight");
-    check_cuda(cudaMalloc(&d_k_proj_weight, d_model * d_model * sizeof(float)), "cudaMalloc d_k_proj_weight");
-    check_cuda(cudaMalloc(&d_v_proj_weight, d_model * d_model * sizeof(float)), "cudaMalloc d_v_proj_weight");
-    check_cuda(cudaMalloc(&d_o_proj_weight, d_model * d_model * sizeof(float)), "cudaMalloc d_o_proj_weight");
-    check_cuda(cudaMalloc(&d_q, total * sizeof(float)), "cudaMalloc d_q");
-    check_cuda(cudaMalloc(&d_k, total * sizeof(float)), "cudaMalloc d_k");
-    check_cuda(cudaMalloc(&d_v, total * sizeof(float)), "cudaMalloc d_v");
-    check_cuda(cudaMalloc(&d_attn_scores, n_heads * seq_len * seq_len * sizeof(float)),
-               "cudaMalloc d_attn_scores");
-    check_cuda(cudaMalloc(&d_attn_context, total * sizeof(float)), "cudaMalloc d_attn_context");
-    check_cuda(cudaMalloc(&d_attn_output, total * sizeof(float)), "cudaMalloc d_attn_output");
-    check_cuda(cudaMalloc(&d_attn_residual_output, total * sizeof(float)),
-               "cudaMalloc d_attn_residual_output");
-    check_cuda(cudaMalloc(&d_ffn_layernorm_output, total * sizeof(float)),
-               "cudaMalloc d_ffn_layernorm_output");
-    check_cuda(cudaMalloc(&d_ffn_up_weight, d_model * ffn_hidden * sizeof(float)),
-               "cudaMalloc d_ffn_up_weight");
-    check_cuda(cudaMalloc(&d_ffn_down_weight, ffn_hidden * d_model * sizeof(float)),
-               "cudaMalloc d_ffn_down_weight");
-    check_cuda(cudaMalloc(&d_ffn_up, ffn_total * sizeof(float)), "cudaMalloc d_ffn_up");
-    check_cuda(cudaMalloc(&d_ffn_down, total * sizeof(float)), "cudaMalloc d_ffn_down");
-    check_cuda(cudaMalloc(&d_final_output, total * sizeof(float)), "cudaMalloc d_final_output");
-
-    check_cuda(cudaMemcpy(d_token_ids, h_token_ids.data(), seq_len * sizeof(int),
-                          cudaMemcpyHostToDevice),
-               "cudaMemcpy token_ids");
-    check_cuda(cudaMemcpy(d_token_embedding_table, weights.token_embedding_table.data(),
+    check_cuda(cudaMemcpy(buffers.token_embedding_table, embedding_weights.token_embedding_table.data(),
                           vocab_size * d_model * sizeof(float), cudaMemcpyHostToDevice),
                "cudaMemcpy token_embedding_table");
-    check_cuda(cudaMemcpy(d_positional_embedding_table, weights.positional_embedding_table.data(),
+    check_cuda(cudaMemcpy(buffers.positional_embedding_table, embedding_weights.positional_embedding_table.data(),
                           max_seq_len * d_model * sizeof(float), cudaMemcpyHostToDevice),
                "cudaMemcpy positional_embedding_table");
-    check_cuda(cudaMemcpy(d_layernorm_weight, h_layernorm_weight.data(),
+    check_cuda(cudaMemcpy(buffers.layernorm_weight, layernorm_weight.data(),
                           d_model * sizeof(float), cudaMemcpyHostToDevice),
                "cudaMemcpy layernorm_weight");
-    check_cuda(cudaMemcpy(d_layernorm_bias, h_layernorm_bias.data(),
+    check_cuda(cudaMemcpy(buffers.layernorm_bias, layernorm_bias.data(),
                           d_model * sizeof(float), cudaMemcpyHostToDevice),
                "cudaMemcpy layernorm_bias");
-    check_cuda(cudaMemcpy(d_q_proj_weight, attention_weights.q_proj_weight.data(),
+    check_cuda(cudaMemcpy(buffers.q_proj_weight, attention_weights.q_proj_weight.data(),
                           d_model * d_model * sizeof(float), cudaMemcpyHostToDevice),
                "cudaMemcpy q_proj_weight");
-    check_cuda(cudaMemcpy(d_k_proj_weight, attention_weights.k_proj_weight.data(),
+    check_cuda(cudaMemcpy(buffers.k_proj_weight, attention_weights.k_proj_weight.data(),
                           d_model * d_model * sizeof(float), cudaMemcpyHostToDevice),
                "cudaMemcpy k_proj_weight");
-    check_cuda(cudaMemcpy(d_v_proj_weight, attention_weights.v_proj_weight.data(),
+    check_cuda(cudaMemcpy(buffers.v_proj_weight, attention_weights.v_proj_weight.data(),
                           d_model * d_model * sizeof(float), cudaMemcpyHostToDevice),
                "cudaMemcpy v_proj_weight");
-    check_cuda(cudaMemcpy(d_o_proj_weight, attention_weights.o_proj_weight.data(),
+    check_cuda(cudaMemcpy(buffers.o_proj_weight, attention_weights.o_proj_weight.data(),
                           d_model * d_model * sizeof(float), cudaMemcpyHostToDevice),
                "cudaMemcpy o_proj_weight");
-    check_cuda(cudaMemcpy(d_ffn_up_weight, ffn_weights.ffn_up_weight.data(),
+    check_cuda(cudaMemcpy(buffers.ffn_up_weight, ffn_weights.ffn_up_weight.data(),
                           d_model * ffn_hidden * sizeof(float), cudaMemcpyHostToDevice),
                "cudaMemcpy ffn_up_weight");
-    check_cuda(cudaMemcpy(d_ffn_down_weight, ffn_weights.ffn_down_weight.data(),
+    check_cuda(cudaMemcpy(buffers.ffn_down_weight, ffn_weights.ffn_down_weight.data(),
                           ffn_hidden * d_model * sizeof(float), cudaMemcpyHostToDevice),
                "cudaMemcpy ffn_down_weight");
+    check_cuda(cudaMemcpy(buffers.final_norm_weight, output_weights.final_norm_weight.data(),
+                          d_model * sizeof(float), cudaMemcpyHostToDevice),
+               "cudaMemcpy final_norm_weight");
+    check_cuda(cudaMemcpy(buffers.final_norm_bias, output_weights.final_norm_bias.data(),
+                          d_model * sizeof(float), cudaMemcpyHostToDevice),
+               "cudaMemcpy final_norm_bias");
+    check_cuda(cudaMemcpy(buffers.lm_head_weight, output_weights.lm_head_weight.data(),
+                          d_model * vocab_size * sizeof(float), cudaMemcpyHostToDevice),
+               "cudaMemcpy lm_head_weight");
+}
+
+void run_forward(const std::vector<int>& token_ids,
+                 int d_model,
+                 int vocab_size,
+                 int n_heads,
+                 int ffn_hidden,
+                 DeviceBuffers& buffers,
+                 std::vector<float>& logits_out) {
+    const int seq_len = static_cast<int>(token_ids.size());
+    const int total = seq_len * d_model;
+    const int ffn_total = seq_len * ffn_hidden;
+    const int d_head = d_model / n_heads;
+
+    check_cuda(cudaMemcpy(buffers.token_ids, token_ids.data(), seq_len * sizeof(int),
+                          cudaMemcpyHostToDevice),
+               "cudaMemcpy token_ids");
 
     const int threads = 256;
     const int blocks = (total + threads - 1) / threads;
     const dim3 matmul_threads(16, 16);
-    const dim3 matmul_blocks((d_model + 15) / 16, (seq_len + 15) / 16);
+    const dim3 dmodel_blocks((d_model + 15) / 16, (seq_len + 15) / 16);
     const dim3 ffn_up_blocks((ffn_hidden + 15) / 16, (seq_len + 15) / 16);
+    const dim3 logits_blocks((vocab_size + 15) / 16, (seq_len + 15) / 16);
 
     token_embedding_lookup_kernel<<<blocks, threads>>>(
-        d_token_ids,
-        d_token_embedding_table,
-        d_positional_embedding_table,
-        d_embedding_output,
+        buffers.token_ids,
+        buffers.token_embedding_table,
+        buffers.positional_embedding_table,
+        buffers.embedding_output,
         seq_len,
         d_model);
     check_cuda(cudaGetLastError(), "launch token_embedding_lookup_kernel");
-    check_cuda(cudaDeviceSynchronize(), "sync token_embedding_lookup_kernel");
 
     const int layernorm_threads = next_power_of_two(d_model);
     const std::size_t layernorm_shared_bytes =
         static_cast<std::size_t>(layernorm_threads) * 2 * sizeof(float);
 
     layernorm_kernel<<<seq_len, layernorm_threads, layernorm_shared_bytes>>>(
-        d_embedding_output,
-        d_layernorm_weight,
-        d_layernorm_bias,
-        d_layernorm_output,
+        buffers.embedding_output,
+        buffers.layernorm_weight,
+        buffers.layernorm_bias,
+        buffers.pre_attn_norm,
         seq_len,
         d_model,
         1e-5f);
-    check_cuda(cudaGetLastError(), "launch layernorm_kernel");
-    check_cuda(cudaDeviceSynchronize(), "sync layernorm_kernel");
+    check_cuda(cudaGetLastError(), "launch pre-attn layernorm");
 
-    matmul_tiled<<<matmul_blocks, matmul_threads>>>(
-        d_layernorm_output, d_q_proj_weight, d_q, seq_len, d_model, d_model);
-    matmul_tiled<<<matmul_blocks, matmul_threads>>>(
-        d_layernorm_output, d_k_proj_weight, d_k, seq_len, d_model, d_model);
-    matmul_tiled<<<matmul_blocks, matmul_threads>>>(
-        d_layernorm_output, d_v_proj_weight, d_v, seq_len, d_model, d_model);
-    check_cuda(cudaGetLastError(), "launch qkv matmuls");
-    check_cuda(cudaDeviceSynchronize(), "sync qkv matmuls");
+    matmul_tiled<<<dmodel_blocks, matmul_threads>>>(
+        buffers.pre_attn_norm, buffers.q_proj_weight, buffers.q, seq_len, d_model, d_model);
+    matmul_tiled<<<dmodel_blocks, matmul_threads>>>(
+        buffers.pre_attn_norm, buffers.k_proj_weight, buffers.k, seq_len, d_model, d_model);
+    matmul_tiled<<<dmodel_blocks, matmul_threads>>>(
+        buffers.pre_attn_norm, buffers.v_proj_weight, buffers.v, seq_len, d_model, d_model);
+    check_cuda(cudaGetLastError(), "launch qkv projections");
 
     const dim3 attn_score_threads(16, 16);
     const dim3 attn_score_blocks((seq_len + 15) / 16, (seq_len + 15) / 16, n_heads);
     attention_scores_kernel<<<attn_score_blocks, attn_score_threads>>>(
-        d_q, d_k, d_attn_scores, seq_len, d_model, n_heads);
+        buffers.q, buffers.k, buffers.attn_scores, seq_len, d_model, n_heads);
     check_cuda(cudaGetLastError(), "launch attention_scores_kernel");
-    check_cuda(cudaDeviceSynchronize(), "sync attention_scores_kernel");
 
     const int softmax_threads = next_power_of_two(seq_len);
     const std::size_t softmax_shared_bytes =
         static_cast<std::size_t>(softmax_threads) * 2 * sizeof(float);
     row_softmax_kernel<<<n_heads * seq_len, softmax_threads, softmax_shared_bytes>>>(
-        d_attn_scores, n_heads * seq_len, seq_len);
+        buffers.attn_scores, n_heads * seq_len, seq_len);
     check_cuda(cudaGetLastError(), "launch row_softmax_kernel");
-    check_cuda(cudaDeviceSynchronize(), "sync row_softmax_kernel");
 
     const dim3 attn_value_threads(16, 16);
     const dim3 attn_value_blocks((d_head + 15) / 16, (seq_len + 15) / 16, n_heads);
     attention_weighted_sum_kernel<<<attn_value_blocks, attn_value_threads>>>(
-        d_attn_scores, d_v, d_attn_context, seq_len, d_model, n_heads);
+        buffers.attn_scores, buffers.v, buffers.attn_context, seq_len, d_model, n_heads);
     check_cuda(cudaGetLastError(), "launch attention_weighted_sum_kernel");
-    check_cuda(cudaDeviceSynchronize(), "sync attention_weighted_sum_kernel");
 
-    matmul_tiled<<<matmul_blocks, matmul_threads>>>(
-        d_attn_context, d_o_proj_weight, d_attn_output, seq_len, d_model, d_model);
-    check_cuda(cudaGetLastError(), "launch o_proj matmul");
-    check_cuda(cudaDeviceSynchronize(), "sync o_proj matmul");
+    matmul_tiled<<<dmodel_blocks, matmul_threads>>>(
+        buffers.attn_context, buffers.o_proj_weight, buffers.attn_output, seq_len, d_model, d_model);
+    check_cuda(cudaGetLastError(), "launch o_proj");
 
     residual_add_kernel<<<blocks, threads>>>(
-        d_attn_output, d_embedding_output, d_attn_residual_output, total);
-    check_cuda(cudaGetLastError(), "launch attention residual_add_kernel");
-    check_cuda(cudaDeviceSynchronize(), "sync attention residual_add_kernel");
+        buffers.attn_output, buffers.embedding_output, buffers.attn_residual, total);
+    check_cuda(cudaGetLastError(), "launch attention residual");
 
     layernorm_kernel<<<seq_len, layernorm_threads, layernorm_shared_bytes>>>(
-        d_attn_residual_output,
-        d_layernorm_weight,
-        d_layernorm_bias,
-        d_ffn_layernorm_output,
+        buffers.attn_residual,
+        buffers.layernorm_weight,
+        buffers.layernorm_bias,
+        buffers.pre_ffn_norm,
         seq_len,
         d_model,
         1e-5f);
-    check_cuda(cudaGetLastError(), "launch ffn layernorm_kernel");
-    check_cuda(cudaDeviceSynchronize(), "sync ffn layernorm_kernel");
+    check_cuda(cudaGetLastError(), "launch pre-ffn layernorm");
 
     matmul_tiled<<<ffn_up_blocks, matmul_threads>>>(
-        d_ffn_layernorm_output, d_ffn_up_weight, d_ffn_up, seq_len, ffn_hidden, d_model);
-    check_cuda(cudaGetLastError(), "launch ffn_up matmul");
-    check_cuda(cudaDeviceSynchronize(), "sync ffn_up matmul");
+        buffers.pre_ffn_norm, buffers.ffn_up_weight, buffers.ffn_up, seq_len, ffn_hidden, d_model);
+    check_cuda(cudaGetLastError(), "launch ffn_up");
 
-    relu_kernel<<<(ffn_total + 255) / 256, 256>>>(d_ffn_up, ffn_total);
-    check_cuda(cudaGetLastError(), "launch relu_kernel");
-    check_cuda(cudaDeviceSynchronize(), "sync relu_kernel");
+    relu_kernel<<<(ffn_total + 255) / 256, 256>>>(buffers.ffn_up, ffn_total);
+    check_cuda(cudaGetLastError(), "launch relu");
 
-    matmul_tiled<<<matmul_blocks, matmul_threads>>>(
-        d_ffn_up, d_ffn_down_weight, d_ffn_down, seq_len, d_model, ffn_hidden);
-    check_cuda(cudaGetLastError(), "launch ffn_down matmul");
-    check_cuda(cudaDeviceSynchronize(), "sync ffn_down matmul");
+    matmul_tiled<<<dmodel_blocks, matmul_threads>>>(
+        buffers.ffn_up, buffers.ffn_down_weight, buffers.ffn_down, seq_len, d_model, ffn_hidden);
+    check_cuda(cudaGetLastError(), "launch ffn_down");
 
     residual_add_kernel<<<blocks, threads>>>(
-        d_ffn_down, d_attn_residual_output, d_final_output, total);
-    check_cuda(cudaGetLastError(), "launch final residual_add_kernel");
-    check_cuda(cudaDeviceSynchronize(), "sync final residual_add_kernel");
+        buffers.ffn_down, buffers.attn_residual, buffers.final_hidden, total);
+    check_cuda(cudaGetLastError(), "launch final residual");
 
-    check_cuda(cudaMemcpy(h_output.data(), d_embedding_output, total * sizeof(float),
-                          cudaMemcpyDeviceToHost),
-               "cudaMemcpy embedding_output");
-    check_cuda(cudaMemcpy(h_layernorm_output.data(), d_layernorm_output, total * sizeof(float),
-                          cudaMemcpyDeviceToHost),
-               "cudaMemcpy layernorm_output");
-    check_cuda(cudaMemcpy(h_q.data(), d_q, total * sizeof(float), cudaMemcpyDeviceToHost),
-               "cudaMemcpy q");
-    check_cuda(cudaMemcpy(h_k.data(), d_k, total * sizeof(float), cudaMemcpyDeviceToHost),
-               "cudaMemcpy k");
-    check_cuda(cudaMemcpy(h_v.data(), d_v, total * sizeof(float), cudaMemcpyDeviceToHost),
-               "cudaMemcpy v");
-    check_cuda(cudaMemcpy(h_attn_output.data(), d_attn_output, total * sizeof(float),
-                          cudaMemcpyDeviceToHost),
-               "cudaMemcpy attn_output");
-    check_cuda(cudaMemcpy(h_ffn_layernorm_output.data(), d_ffn_layernorm_output, total * sizeof(float),
-                          cudaMemcpyDeviceToHost),
-               "cudaMemcpy ffn_layernorm_output");
-    check_cuda(cudaMemcpy(h_ffn_up.data(), d_ffn_up, ffn_total * sizeof(float),
-                          cudaMemcpyDeviceToHost),
-               "cudaMemcpy ffn_up");
-    check_cuda(cudaMemcpy(h_ffn_down.data(), d_ffn_down, total * sizeof(float),
-                          cudaMemcpyDeviceToHost),
-               "cudaMemcpy ffn_down");
-    check_cuda(cudaMemcpy(h_final_output.data(), d_final_output, total * sizeof(float),
-                          cudaMemcpyDeviceToHost),
-               "cudaMemcpy final_output");
+    layernorm_kernel<<<seq_len, layernorm_threads, layernorm_shared_bytes>>>(
+        buffers.final_hidden,
+        buffers.final_norm_weight,
+        buffers.final_norm_bias,
+        buffers.final_norm_output,
+        seq_len,
+        d_model,
+        1e-5f);
+    check_cuda(cudaGetLastError(), "launch final norm");
 
-    std::cout << "Token ids:\n";
-    for (int i = 0; i < seq_len; ++i) {
-        std::cout << h_token_ids[i] << '\n';
-    }
+    matmul_tiled<<<logits_blocks, matmul_threads>>>(
+        buffers.final_norm_output, buffers.lm_head_weight, buffers.logits, seq_len, vocab_size, d_model);
+    check_cuda(cudaGetLastError(), "launch lm_head");
 
-    std::cout << "\nEmbedded sequence:\n";
-    for (int t = 0; t < seq_len; ++t) {
-        std::cout << "position " << t << ": ";
-        for (int d = 0; d < d_model; ++d) {
-            std::cout << h_output[t * d_model + d] << ' ';
+    check_cuda(cudaDeviceSynchronize(), "sync forward pass");
+
+    logits_out.resize(static_cast<std::size_t>(seq_len) * static_cast<std::size_t>(vocab_size));
+    check_cuda(cudaMemcpy(logits_out.data(), buffers.logits,
+                          seq_len * vocab_size * sizeof(float), cudaMemcpyDeviceToHost),
+               "cudaMemcpy logits");
+}
+
+int argmax_last_token(const std::vector<float>& logits, int seq_len, int vocab_size) {
+    int best_token_id = 0;
+    float best_logit = logits[(seq_len - 1) * vocab_size];
+    for (int token_id = 1; token_id < vocab_size; ++token_id) {
+        const float value = logits[(seq_len - 1) * vocab_size + token_id];
+        if (value > best_logit) {
+            best_logit = value;
+            best_token_id = token_id;
         }
-        std::cout << '\n';
+    }
+    return best_token_id;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    if (argc != 3 && argc != 4) {
+        std::cerr
+            << "Usage: " << argv[0]
+            << " <model_config.json> <token_ids.txt> [max_new_tokens]\n";
+        return 1;
     }
 
-    std::cout << "\nLayerNorm output:\n";
-    for (int t = 0; t < seq_len; ++t) {
-        std::cout << "position " << t << ": ";
-        for (int d = 0; d < d_model; ++d) {
-            std::cout << h_layernorm_output[t * d_model + d] << ' ';
+    const EmbeddingWeights embedding_weights = load_embedding_weights(argv[1]);
+    const AttentionWeights attention_weights = load_attention_weights(argv[1]);
+    const FFNWeights ffn_weights = load_ffn_weights(argv[1]);
+    const OutputWeights output_weights =
+        load_output_weights(argv[1], embedding_weights.token_embedding_table);
+
+    std::vector<int> token_ids = load_ints(argv[2]);
+    const int d_model = embedding_weights.config.d_model;
+    const int max_seq_len = embedding_weights.config.max_seq_len;
+    const int vocab_size = embedding_weights.config.vocab_size;
+    const int n_heads = embedding_weights.config.n_heads;
+    const int ffn_hidden = embedding_weights.config.ffn_hidden;
+    const int max_new_tokens = (argc == 4) ? std::atoi(argv[3]) : 0;
+
+    if (static_cast<int>(token_ids.size()) > max_seq_len) {
+        std::cerr << "seq_len exceeds max_seq_len\n";
+        return 1;
+    }
+
+    if (d_model > 256 || max_seq_len > 256) {
+        std::cerr << "current minimal kernels expect d_model <= 256 and max_seq_len <= 256\n";
+        return 1;
+    }
+
+    for (int token_id : token_ids) {
+        if (token_id < 0 || token_id >= vocab_size) {
+            std::cerr << "token id out of range: " << token_id << '\n';
+            return 1;
         }
-        std::cout << '\n';
     }
 
-    std::cout << "\nQ projection:\n";
-    for (int t = 0; t < seq_len; ++t) {
-        std::cout << "position " << t << ": ";
-        for (int d = 0; d < d_model; ++d) {
-            std::cout << h_q[t * d_model + d] << ' ';
+    std::vector<float> layernorm_weight(d_model, 1.0f);
+    std::vector<float> layernorm_bias(d_model, 0.0f);
+
+    DeviceBuffers buffers;
+    allocate_buffers(buffers, max_seq_len, d_model, vocab_size, n_heads, ffn_hidden);
+    copy_static_weights_to_device(embedding_weights, attention_weights, ffn_weights, output_weights,
+                                  layernorm_weight, layernorm_bias, buffers);
+
+    std::vector<float> logits;
+    for (int step = 0; step <= max_new_tokens; ++step) {
+        run_forward(token_ids, d_model, vocab_size, n_heads, ffn_hidden, buffers, logits);
+
+        const int seq_len = static_cast<int>(token_ids.size());
+        std::cout << "Current token ids:\n";
+        for (int token_id : token_ids) {
+            std::cout << token_id << ' ';
         }
-        std::cout << '\n';
-    }
-
-    std::cout << "\nK projection:\n";
-    for (int t = 0; t < seq_len; ++t) {
-        std::cout << "position " << t << ": ";
-        for (int d = 0; d < d_model; ++d) {
-            std::cout << h_k[t * d_model + d] << ' ';
+        std::cout << "\n\nLast-position logits:\n";
+        for (int vocab_idx = 0; vocab_idx < vocab_size; ++vocab_idx) {
+            std::cout << logits[(seq_len - 1) * vocab_size + vocab_idx] << ' ';
         }
-        std::cout << '\n';
-    }
 
-    std::cout << "\nV projection:\n";
-    for (int t = 0; t < seq_len; ++t) {
-        std::cout << "position " << t << ": ";
-        for (int d = 0; d < d_model; ++d) {
-            std::cout << h_v[t * d_model + d] << ' ';
+        const int next_token_id = argmax_last_token(logits, seq_len, vocab_size);
+        std::cout << "\nNext token argmax: " << next_token_id << "\n";
+
+        if (step == max_new_tokens || static_cast<int>(token_ids.size()) >= max_seq_len) {
+            break;
         }
-        std::cout << '\n';
+
+        token_ids.push_back(next_token_id);
+        std::cout << "\n";
     }
 
-    std::cout << "\nAttention output projection:\n";
-    for (int t = 0; t < seq_len; ++t) {
-        std::cout << "position " << t << ": ";
-        for (int d = 0; d < d_model; ++d) {
-            std::cout << h_attn_output[t * d_model + d] << ' ';
-        }
-        std::cout << '\n';
-    }
-
-    std::cout << "\nFFN LayerNorm output:\n";
-    for (int t = 0; t < seq_len; ++t) {
-        std::cout << "position " << t << ": ";
-        for (int d = 0; d < d_model; ++d) {
-            std::cout << h_ffn_layernorm_output[t * d_model + d] << ' ';
-        }
-        std::cout << '\n';
-    }
-
-    std::cout << "\nFFN up projection:\n";
-    for (int t = 0; t < seq_len; ++t) {
-        std::cout << "position " << t << ": ";
-        for (int d = 0; d < ffn_hidden; ++d) {
-            std::cout << h_ffn_up[t * ffn_hidden + d] << ' ';
-        }
-        std::cout << '\n';
-    }
-
-    std::cout << "\nFFN down projection:\n";
-    for (int t = 0; t < seq_len; ++t) {
-        std::cout << "position " << t << ": ";
-        for (int d = 0; d < d_model; ++d) {
-            std::cout << h_ffn_down[t * d_model + d] << ' ';
-        }
-        std::cout << '\n';
-    }
-
-    std::cout << "\nFinal block output:\n";
-    for (int t = 0; t < seq_len; ++t) {
-        std::cout << "position " << t << ": ";
-        for (int d = 0; d < d_model; ++d) {
-            std::cout << h_final_output[t * d_model + d] << ' ';
-        }
-        std::cout << '\n';
-    }
-
-    cudaFree(d_token_ids);
-    cudaFree(d_token_embedding_table);
-    cudaFree(d_positional_embedding_table);
-    cudaFree(d_embedding_output);
-    cudaFree(d_layernorm_weight);
-    cudaFree(d_layernorm_bias);
-    cudaFree(d_layernorm_output);
-    cudaFree(d_q_proj_weight);
-    cudaFree(d_k_proj_weight);
-    cudaFree(d_v_proj_weight);
-    cudaFree(d_o_proj_weight);
-    cudaFree(d_q);
-    cudaFree(d_k);
-    cudaFree(d_v);
-    cudaFree(d_attn_scores);
-    cudaFree(d_attn_context);
-    cudaFree(d_attn_output);
-    cudaFree(d_attn_residual_output);
-    cudaFree(d_ffn_layernorm_output);
-    cudaFree(d_ffn_up_weight);
-    cudaFree(d_ffn_down_weight);
-    cudaFree(d_ffn_up);
-    cudaFree(d_ffn_down);
-    cudaFree(d_final_output);
+    free_buffers(buffers);
     return 0;
 }
