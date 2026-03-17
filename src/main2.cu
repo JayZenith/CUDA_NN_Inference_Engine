@@ -447,6 +447,12 @@ int main(int argc, char** argv) {
         std::cout << "\n";
     }
 
+    std::cout << "\nFinal token ids:\n";
+    for (int token_id : token_ids) {
+        std::cout << token_id << ' ';
+    }
+    std::cout << "\n";
+
     free_buffers(buffers);
     return 0;
 }
