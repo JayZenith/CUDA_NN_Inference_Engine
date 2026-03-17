@@ -71,6 +71,19 @@ __global__ void relu_kernel(float* x, int size){
     if(i < size) x[i] = fmaxf(0.0f, x[i]);
 }
 
+__device__ float gelu(float x) {
+    const float kAlpha = 0.7978845608f;
+    const float kBeta = 0.044715f;
+    return 0.5f * x * (1.0f + tanhf(kAlpha * (x + kBeta * x * x * x)));
+}
+
+__global__ void gelu_kernel(float* x, int size) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < size) {
+        x[i] = gelu(x[i]);
+    }
+}
+
 __global__ void softmax_kernel(float* x, int size){
     float max_val = -1e20;
     for(int i=0;i<size;i++) max_val = fmaxf(max_val, x[i]);

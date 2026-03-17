@@ -13,45 +13,42 @@ struct ModelConfig {
     int vocab_size;
     int n_heads;
     int ffn_hidden;
+    int n_layers;
     int tie_word_embeddings;
     std::string token_embedding_path;
     std::string positional_embedding_path;
-    std::string q_proj_path;
-    std::string k_proj_path;
-    std::string v_proj_path;
-    std::string o_proj_path;
-    std::string ffn_up_path;
-    std::string ffn_down_path;
     std::string final_norm_weight_path;
     std::string final_norm_bias_path;
     std::string lm_head_path;
 };
 
-struct EmbeddingWeights {
+struct TransformerLayerWeights {
+    std::vector<float> ln1_weight;
+    std::vector<float> ln1_bias;
+    std::vector<float> q_proj_weight;
+    std::vector<float> q_proj_bias;
+    std::vector<float> k_proj_weight;
+    std::vector<float> k_proj_bias;
+    std::vector<float> v_proj_weight;
+    std::vector<float> v_proj_bias;
+    std::vector<float> o_proj_weight;
+    std::vector<float> o_proj_bias;
+    std::vector<float> ln2_weight;
+    std::vector<float> ln2_bias;
+    std::vector<float> ffn_up_weight;
+    std::vector<float> ffn_up_bias;
+    std::vector<float> ffn_down_weight;
+    std::vector<float> ffn_down_bias;
+};
+
+struct GPT2Weights {
     ModelConfig config;
     std::vector<float> token_embedding_table;
     std::vector<float> positional_embedding_table;
-};
-
-struct AttentionWeights {
-    ModelConfig config;
-    std::vector<float> q_proj_weight;
-    std::vector<float> k_proj_weight;
-    std::vector<float> v_proj_weight;
-    std::vector<float> o_proj_weight;
-};
-
-struct FFNWeights {
-    ModelConfig config;
-    std::vector<float> ffn_up_weight;
-    std::vector<float> ffn_down_weight;
-};
-
-struct OutputWeights {
-    ModelConfig config;
     std::vector<float> final_norm_weight;
     std::vector<float> final_norm_bias;
     std::vector<float> lm_head_weight;
+    std::vector<TransformerLayerWeights> layers;
 };
 
 inline std::string read_text_file(const char* path) {
@@ -155,23 +152,17 @@ inline ModelConfig load_model_config(const char* path) {
         extract_json_int(text, "vocab_size"),
         extract_json_int(text, "n_heads"),
         extract_json_int(text, "ffn_hidden"),
+        extract_json_int(text, "n_layers"),
         extract_json_int(text, "tie_word_embeddings"),
         extract_json_string(text, "token_embedding_path"),
         extract_json_string(text, "positional_embedding_path"),
-        extract_json_string(text, "q_proj_path"),
-        extract_json_string(text, "k_proj_path"),
-        extract_json_string(text, "v_proj_path"),
-        extract_json_string(text, "o_proj_path"),
-        extract_json_string(text, "ffn_up_path"),
-        extract_json_string(text, "ffn_down_path"),
         extract_json_string(text, "final_norm_weight_path"),
         extract_json_string(text, "final_norm_bias_path"),
         extract_json_string(text, "lm_head_path"),
     };
 
     if (config.d_model <= 0 || config.max_seq_len <= 0 || config.vocab_size <= 0 ||
-        config.n_heads <= 0 || config.ffn_hidden <= 0 ||
-        (config.tie_word_embeddings != 0 && config.tie_word_embeddings != 1)) {
+        config.n_heads <= 0 || config.ffn_hidden <= 0 || config.n_layers <= 0) {
         std::cerr << "Config dimensions must be positive\n";
         std::exit(1);
     }
@@ -184,97 +175,35 @@ inline ModelConfig load_model_config(const char* path) {
     return config;
 }
 
-inline EmbeddingWeights load_embedding_weights(const char* config_path) {
-    const ModelConfig config = load_model_config(config_path);
-    const std::filesystem::path base_dir = std::filesystem::path(config_path).parent_path();
-    const std::filesystem::path token_path = base_dir / config.token_embedding_path;
-    const std::filesystem::path pos_path = base_dir / config.positional_embedding_path;
-
-    EmbeddingWeights weights{
-        config,
-        load_floats(token_path),
-        load_floats(pos_path),
-    };
-
-    const std::size_t expected_token_values =
-        static_cast<std::size_t>(config.vocab_size) * static_cast<std::size_t>(config.d_model);
-    const std::size_t expected_pos_values =
-        static_cast<std::size_t>(config.max_seq_len) * static_cast<std::size_t>(config.d_model);
-
-    if (weights.token_embedding_table.size() != expected_token_values) {
-        std::cerr << "token embedding table size mismatch\n";
+inline void expect_size(const std::vector<float>& values, std::size_t expected, const char* label) {
+    if (values.size() != expected) {
+        std::cerr << label << " size mismatch\n";
         std::exit(1);
     }
-
-    if (weights.positional_embedding_table.size() != expected_pos_values) {
-        std::cerr << "positional embedding table size mismatch\n";
-        std::exit(1);
-    }
-
-    return weights;
 }
 
-inline FFNWeights load_ffn_weights(const char* config_path) {
+inline GPT2Weights load_gpt2_weights(const char* config_path) {
     const ModelConfig config = load_model_config(config_path);
     const std::filesystem::path base_dir = std::filesystem::path(config_path).parent_path();
 
-    FFNWeights weights{
+    GPT2Weights weights{
         config,
-        load_floats(base_dir / config.ffn_up_path),
-        load_floats(base_dir / config.ffn_down_path),
-    };
-
-    const std::size_t expected_up_values =
-        static_cast<std::size_t>(config.d_model) * static_cast<std::size_t>(config.ffn_hidden);
-    const std::size_t expected_down_values =
-        static_cast<std::size_t>(config.ffn_hidden) * static_cast<std::size_t>(config.d_model);
-
-    if (weights.ffn_up_weight.size() != expected_up_values ||
-        weights.ffn_down_weight.size() != expected_down_values) {
-        std::cerr << "ffn projection size mismatch\n";
-        std::exit(1);
-    }
-
-    return weights;
-}
-
-inline AttentionWeights load_attention_weights(const char* config_path) {
-    const ModelConfig config = load_model_config(config_path);
-    const std::filesystem::path base_dir = std::filesystem::path(config_path).parent_path();
-
-    AttentionWeights weights{
-        config,
-        load_floats(base_dir / config.q_proj_path),
-        load_floats(base_dir / config.k_proj_path),
-        load_floats(base_dir / config.v_proj_path),
-        load_floats(base_dir / config.o_proj_path),
-    };
-
-    const std::size_t expected_proj_values =
-        static_cast<std::size_t>(config.d_model) * static_cast<std::size_t>(config.d_model);
-
-    if (weights.q_proj_weight.size() != expected_proj_values ||
-        weights.k_proj_weight.size() != expected_proj_values ||
-        weights.v_proj_weight.size() != expected_proj_values ||
-        weights.o_proj_weight.size() != expected_proj_values) {
-        std::cerr << "attention projection size mismatch\n";
-        std::exit(1);
-    }
-
-    return weights;
-}
-
-inline OutputWeights load_output_weights(const char* config_path,
-                                         const std::vector<float>& token_embedding_table) {
-    const ModelConfig config = load_model_config(config_path);
-    const std::filesystem::path base_dir = std::filesystem::path(config_path).parent_path();
-
-    OutputWeights weights{
-        config,
+        load_floats(base_dir / config.token_embedding_path),
+        load_floats(base_dir / config.positional_embedding_path),
         load_floats(base_dir / config.final_norm_weight_path),
         load_floats(base_dir / config.final_norm_bias_path),
         {},
+        {},
     };
+
+    expect_size(weights.token_embedding_table,
+                static_cast<std::size_t>(config.vocab_size) * static_cast<std::size_t>(config.d_model),
+                "token embedding table");
+    expect_size(weights.positional_embedding_table,
+                static_cast<std::size_t>(config.max_seq_len) * static_cast<std::size_t>(config.d_model),
+                "positional embedding table");
+    expect_size(weights.final_norm_weight, static_cast<std::size_t>(config.d_model), "final norm weight");
+    expect_size(weights.final_norm_bias, static_cast<std::size_t>(config.d_model), "final norm bias");
 
     if (config.tie_word_embeddings == 1) {
         weights.lm_head_weight.resize(
@@ -282,26 +211,69 @@ inline OutputWeights load_output_weights(const char* config_path,
         for (int token_id = 0; token_id < config.vocab_size; ++token_id) {
             for (int feature_idx = 0; feature_idx < config.d_model; ++feature_idx) {
                 weights.lm_head_weight[feature_idx * config.vocab_size + token_id] =
-                    token_embedding_table[token_id * config.d_model + feature_idx];
+                    weights.token_embedding_table[token_id * config.d_model + feature_idx];
             }
         }
     } else {
         weights.lm_head_weight = load_floats(base_dir / config.lm_head_path);
     }
+    expect_size(weights.lm_head_weight,
+                static_cast<std::size_t>(config.d_model) * static_cast<std::size_t>(config.vocab_size),
+                "lm head weight");
 
-    const std::size_t expected_norm_values = static_cast<std::size_t>(config.d_model);
-    const std::size_t expected_lm_values =
-        static_cast<std::size_t>(config.d_model) * static_cast<std::size_t>(config.vocab_size);
+    weights.layers.reserve(config.n_layers);
+    for (int layer_idx = 0; layer_idx < config.n_layers; ++layer_idx) {
+        const std::filesystem::path layer_dir = base_dir / ("layer_" + std::to_string(layer_idx));
 
-    if (weights.final_norm_weight.size() != expected_norm_values ||
-        weights.final_norm_bias.size() != expected_norm_values) {
-        std::cerr << "final norm size mismatch\n";
-        std::exit(1);
-    }
+        TransformerLayerWeights layer{
+            load_floats(layer_dir / "ln1_weight.txt"),
+            load_floats(layer_dir / "ln1_bias.txt"),
+            load_floats(layer_dir / "q_proj_weight.txt"),
+            load_floats(layer_dir / "q_proj_bias.txt"),
+            load_floats(layer_dir / "k_proj_weight.txt"),
+            load_floats(layer_dir / "k_proj_bias.txt"),
+            load_floats(layer_dir / "v_proj_weight.txt"),
+            load_floats(layer_dir / "v_proj_bias.txt"),
+            load_floats(layer_dir / "o_proj_weight.txt"),
+            load_floats(layer_dir / "o_proj_bias.txt"),
+            load_floats(layer_dir / "ln2_weight.txt"),
+            load_floats(layer_dir / "ln2_bias.txt"),
+            load_floats(layer_dir / "ffn_up_weight.txt"),
+            load_floats(layer_dir / "ffn_up_bias.txt"),
+            load_floats(layer_dir / "ffn_down_weight.txt"),
+            load_floats(layer_dir / "ffn_down_bias.txt"),
+        };
 
-    if (weights.lm_head_weight.size() != expected_lm_values) {
-        std::cerr << "lm head size mismatch\n";
-        std::exit(1);
+        expect_size(layer.ln1_weight, static_cast<std::size_t>(config.d_model), "ln1_weight");
+        expect_size(layer.ln1_bias, static_cast<std::size_t>(config.d_model), "ln1_bias");
+        expect_size(layer.q_proj_weight,
+                    static_cast<std::size_t>(config.d_model) * static_cast<std::size_t>(config.d_model),
+                    "q_proj_weight");
+        expect_size(layer.q_proj_bias, static_cast<std::size_t>(config.d_model), "q_proj_bias");
+        expect_size(layer.k_proj_weight,
+                    static_cast<std::size_t>(config.d_model) * static_cast<std::size_t>(config.d_model),
+                    "k_proj_weight");
+        expect_size(layer.k_proj_bias, static_cast<std::size_t>(config.d_model), "k_proj_bias");
+        expect_size(layer.v_proj_weight,
+                    static_cast<std::size_t>(config.d_model) * static_cast<std::size_t>(config.d_model),
+                    "v_proj_weight");
+        expect_size(layer.v_proj_bias, static_cast<std::size_t>(config.d_model), "v_proj_bias");
+        expect_size(layer.o_proj_weight,
+                    static_cast<std::size_t>(config.d_model) * static_cast<std::size_t>(config.d_model),
+                    "o_proj_weight");
+        expect_size(layer.o_proj_bias, static_cast<std::size_t>(config.d_model), "o_proj_bias");
+        expect_size(layer.ln2_weight, static_cast<std::size_t>(config.d_model), "ln2_weight");
+        expect_size(layer.ln2_bias, static_cast<std::size_t>(config.d_model), "ln2_bias");
+        expect_size(layer.ffn_up_weight,
+                    static_cast<std::size_t>(config.d_model) * static_cast<std::size_t>(config.ffn_hidden),
+                    "ffn_up_weight");
+        expect_size(layer.ffn_up_bias, static_cast<std::size_t>(config.ffn_hidden), "ffn_up_bias");
+        expect_size(layer.ffn_down_weight,
+                    static_cast<std::size_t>(config.ffn_hidden) * static_cast<std::size_t>(config.d_model),
+                    "ffn_down_weight");
+        expect_size(layer.ffn_down_bias, static_cast<std::size_t>(config.d_model), "ffn_down_bias");
+
+        weights.layers.push_back(std::move(layer));
     }
 
     return weights;
